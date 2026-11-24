@@ -1,0 +1,52 @@
+import { readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { buildDossier } from './vendor/makefun-board.ts';
+import { boardIssue, buildBoard, parseSnapshot } from './lib/model.ts';
+
+function args(argv: string[]): { input: string; output: string } {
+  let input = '/input/snapshot.json';
+  let output = process.env.MAKEFUN_OUTPUT_DIR || '/output';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--input' && argv[i + 1]) input = argv[++i];
+    else if (argv[i] === '--output' && argv[i + 1]) output = argv[++i];
+  }
+  return { input: resolve(input), output: resolve(output) };
+}
+function stable(value: unknown): string {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number') { if (!Number.isFinite(value)) throw new Error('non-finite JSON number'); return JSON.stringify(value); }
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (typeof value === 'object') return `{${Object.keys(value as object).sort().map(k => `${JSON.stringify(k)}:${stable((value as Record<string, unknown>)[k])}`).join(',')}}`;
+  throw new Error(`cannot serialize ${typeof value}`);
+}
+function writeOutput(dir: string, snapshotPath: string): void {
+  const snapshot = parseSnapshot(JSON.parse(readFileSync(snapshotPath, 'utf8')));
+  const built = buildBoard(snapshot);
+  const issue = boardIssue(snapshot, built.rows);
+  if (issue) throw new Error(`board self-check failed: ${issue}`);
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, 'dashboard'), { recursive: true });
+  mkdirSync(join(dir, 'screenshots'), { recursive: true });
+  writeFileSync(join(dir, 'board.json'), stable({ rows: built.rows }));
+  const data = {
+    as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd,
+    model_version: 'peer-comps-1.0', protocols_total: snapshot.protocols.length,
+    watchlist_size: snapshot.watchlist.length, board_size: built.rows.length,
+    early_size: built.rows.filter(r => r.tvl_usd < snapshot.floor_usd).length,
+    live_size: built.model.global_peer_count, model: built.model,
+    rows: built.rows, live: built.live
+  };
+  writeFileSync(join(dir, 'data.js'), `window.RADAR=${stable(data)};`);
+  cpSync(resolve('dashboard'), join(dir, 'dashboard'), { recursive: true });
+  cpSync(resolve('screenshots'), join(dir, 'screenshots'), { recursive: true });
+  writeFileSync(join(dir, 'dossier.json'), buildDossier(dir, { text_max_bytes: 65536 }));
+}
+
+try {
+  const { input, output } = args(process.argv.slice(2));
+  writeOutput(output, input);
+} catch (error) {
+  process.stderr.write(`token-radar: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+}
