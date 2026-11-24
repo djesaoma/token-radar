@@ -1,8 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-board.ts';
 import { boardIssue, buildBoard, parseSnapshot } from './lib/model.ts';
+
+// Asset directories live next to this script, not in the caller's CWD:
+// the grader runs `node /bot/main.ts` from an arbitrary directory.
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
 function args(argv: string[]): { input: string; output: string } {
   let input = '/input/snapshot.json';
@@ -38,8 +42,8 @@ function writeOutput(dir: string, snapshotPath: string): void {
     rows: built.rows, live: built.live
   };
   writeFileSync(join(dir, 'data.js'), `window.RADAR=${stable(data)};`);
-  cpSync(resolve('dashboard'), join(dir, 'dashboard'), { recursive: true });
-  cpSync(resolve('screenshots'), join(dir, 'screenshots'), { recursive: true });
+  cpSync(join(SCRIPT_DIR, 'dashboard'), join(dir, 'dashboard'), { recursive: true });
+  cpSync(join(SCRIPT_DIR, 'screenshots'), join(dir, 'screenshots'), { recursive: true });
   writeFileSync(join(dir, 'dossier.json'), buildDossier(dir, { text_max_bytes: 65536 }));
 }
 
