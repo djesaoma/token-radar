@@ -35,7 +35,7 @@ function writeOutput(dir: string, snapshotPath: string): void {
   writeFileSync(join(dir, 'board.json'), stable({ rows: built.rows }));
   const data = {
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd,
-    model_version: 'peer-comps-1.0', protocols_total: snapshot.protocols.length,
+    model_version: built.model.version, protocols_total: snapshot.protocols.length,
     watchlist_size: snapshot.watchlist.length, board_size: built.rows.length,
     early_size: built.rows.filter(r => r.tvl_usd < snapshot.floor_usd).length,
     live_size: built.model.global_peer_count, model: built.model,
