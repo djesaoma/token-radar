@@ -39,9 +39,13 @@
   }
   function model() {
     var m = D.model;
-    put('formula', 'round(TVL × fitted category multiple × [1 + ' + m.growth_weight + ' × clip(7d%, ' + m.growth_floor + ', +' + m.growth_cap + ')/100] × maturity(age) × breadth(chains))');
-    var h = m.holdout;
-    put('validation-note', 'Deterministic 80/20 live-token holdout · ' + h.count + ' held out · median absolute % error ' + h.median_absolute_pct_error.toFixed(1) + '% · ' + (h.within_2x_share * 100).toFixed(1) + '% within 2×. Peer mcap/TVL ratios are capped at 5.0× before fitting. Ranking signal, not a price forecast. Maturity peaks near two years, then eases toward ' + m.maturity_old + '; unknown age assumes one year. Chain breadth adds 2.5% per extra chain, capped at 10%.');
+    put('formula', m.formula);
+    var h = m.holdout, v = m.validation;
+    function metric(label, x) { return label + ': ' + x.median_absolute_pct_error.toFixed(1) + '% median error / ' + (100 * x.within_2x_share).toFixed(1) + '% within 2× (n=' + x.count + ')'; }
+    put('validation-note', metric('Same 80/20 holdout', h) + '. ' + metric('Nested 5-fold', v.k_fold) + '. ' + metric('Category-out', v.leave_one_category_out) + '. ' + m.config.estimator + '; ' + m.shrink_peers + ' prior peers; growth ' + m.config.growth + ', age ' + m.config.maturity + ', breadth ' + (m.config.breadth ? 'on' : 'off') + '. Ranking signal, not a price forecast.');
+    var audit = document.createElement('details');
+    audit.innerHTML = '<summary>Validation method &amp; ablations</summary><p>' + esc(v.selection_rule) + '</p><p>' + esc(m.validation_note) + '</p><p>' + esc(metric('Old reported holdout', v.legacy_holdout)) + '. ' + esc(metric('Old full formula', v.legacy_full_formula)) + '. Excluded nonpositive price sentinel(s): ' + v.excluded_nonpositive_count + '.</p><p>Age power = ((days + 365) / 730)^0.25; missing age = 365 days. Fitted multiples apply at TVL $' + Math.round(m.tvl_pivot_usd).toLocaleString('en-US') + '; row multiples include the size adjustment. Candidate selection uses development mean |log error|; lower is better. The holdout was already used for this project before this revision, so it is not a fresh external test.</p><div>' + v.ablation.map(function (a) { var c = a.config; return '<p>' + esc([c.estimator, 'prior ' + c.shrink, 'growth ' + c.growth, 'age ' + c.maturity, 'breadth ' + c.breadth].join(' / ')) + ': development log error ' + a.development_cv.mean_absolute_log_error.toFixed(3) + '; ' + esc(metric('holdout', a.holdout)) + '</p>'; }).join('') + '</div>';
+    $('validation-note').parentNode.appendChild(audit);
     put('model-version', 'MODEL ' + D.model_version);
     var entries = Object.keys(m.category_multiples).map(function (k) { return [k, m.category_multiples[k]]; }).sort(function (a, b) { return b[1].multiple - a[1].multiple || a[0].localeCompare(b[0]); });
     $('comps').innerHTML = entries.map(function (x) { return '<div class="comp"><span>' + esc(x[0]) + ' <small>n=' + x[1].peers + '</small></span><b>' + x[1].multiple.toFixed(3) + '×</b></div>'; }).join('');
@@ -84,12 +88,12 @@
     if (!r) return;
     state.selected = slug; saveHash();
     var m = D.model; var components = [
-      ['TVL base', fmt(r.tvl_usd)], ['Category multiple', r.category_multiple.toFixed(3) + '×'],
+      ['TVL base', fmt(r.tvl_usd)], ['Category / size multiple', r.category_multiple.toFixed(3) + '×'],
       ['7-day growth factor', r.growth_multiplier.toFixed(3) + '×'], ['Maturity factor', r.maturity_multiplier.toFixed(3) + '×'],
       ['Chain breadth', r.chain_breadth_multiplier.toFixed(3) + '×'], ['Implied value', fmt(r.implied_value_usd)]
     ];
     $('drawer').innerHTML = '<div class="drawer-top"><div><div class="eyebrow">RANK ' + r.rank + ' / ' + D.board_size + '</div><h2>' + esc(r.name) + '</h2><div class="drawer-sub">' + esc(r.category || 'Other') + ' · ' + esc(r.chains.join(', ')) + '</div></div><button class="close" aria-label="Close details">×</button></div>' +
-      '<section class="drawer-section"><h3>Implied value breakdown</h3><div class="breakdown">' + components.map(function (x) { return '<div><span>' + esc(x[0]) + '</span><b>' + esc(x[1]) + '</b></div>'; }).join('') + '</div><p class="why">' + fmt(r.tvl_usd) + ' TVL × ' + r.category_multiple.toFixed(3) + ' peer multiple × ' + r.growth_multiplier.toFixed(3) + ' growth × ' + r.maturity_multiplier.toFixed(3) + ' maturity × ' + r.chain_breadth_multiplier.toFixed(3) + ' chain breadth. The result is a model estimate.</p></section>' +
+      '<section class="drawer-section"><h3>Implied value breakdown</h3><div class="breakdown">' + components.map(function (x) { return '<div><span>' + esc(x[0]) + '</span><b>' + esc(x[1]) + '</b></div>'; }).join('') + '</div><p class="why">' + fmt(r.tvl_usd) + ' TVL × ' + r.category_multiple.toFixed(3) + ' effective category / size multiple × ' + r.growth_multiplier.toFixed(3) + ' growth × ' + r.maturity_multiplier.toFixed(3) + ' maturity × ' + r.chain_breadth_multiplier.toFixed(3) + ' chain breadth. The result is a model estimate.</p></section>' +
       '<section class="drawer-section"><h3>Costed farm plan</h3><ol class="steps">' + r.farm_steps.map(function (s) { var found = / (?:Cost|Gas|Capital): /.exec(s); var split = found ? found.index : s.length; return '<li><div><div class="step-title">' + esc(s.slice(0, split)) + '</div><span class="step-meta">' + esc(s.slice(split + 1)) + '</span></div></li>'; }).join('') + '</ol></section>' +
       '<section class="drawer-section"><h3>Snapshot record</h3><div class="breakdown"><div><span>TVL</span><b>' + fmt(r.tvl_usd) + '</b></div><div><span>7-day change</span><b>' + pct(r.change_7d) + '</b></div><div><span>Listed</span><b>' + esc(r.listed_at || 'Not recorded') + '</b></div><div><span>Age</span><b>' + ageText(r.age_days) + '</b></div></div></section>';
     $('drawer').classList.add('open'); $('drawer').setAttribute('aria-hidden', 'false'); $('shade').hidden = false;
